@@ -13,7 +13,8 @@ def _fit_polynomial(days, weights, degree):
     poly = np.poly1d(coeffs)
     predicted = poly(days)
     r2 = compute_r_squared(weights, predicted)
-    return {"predict": lambda t, p=poly: p(t), "r_squared": r2}
+    std = np.std(weights - predicted)
+    return {"predict": lambda t, p=poly: p(t), "r_squared": r2, "residual_std": std}
 
 def _fit_exponential_decay(days, weights):
     def model(t, a, b, c):
@@ -24,7 +25,8 @@ def _fit_exponential_decay(days, weights):
         popt, _ = curve_fit(model, days, weights, p0=p0, maxfev=10000)
         predicted = model(days, *popt)
         r2 = compute_r_squared(weights, predicted)
-        return {"predict": lambda t, p=popt: model(t, *p), "r_squared": r2}
+        std = np.std(weights - predicted)
+        return {"predict": lambda t, p=popt: model(t, *p), "r_squared": r2, "residual_std": std}
     except RuntimeError:
         return None
 
@@ -37,7 +39,8 @@ def _fit_hall_linearized(days, weights):
         popt, _ = curve_fit(model, days, weights, p0=p0, maxfev=10000)
         predicted = model(days, *popt)
         r2 = compute_r_squared(weights, predicted)
-        return {"predict": lambda t, p=popt: model(t, *p), "r_squared": r2}
+        std = np.std(weights - predicted)
+        return {"predict": lambda t, p=popt: model(t, *p), "r_squared": r2, "residual_std": std}
     except RuntimeError:
         return None
 
@@ -50,7 +53,8 @@ def _fit_thomas(days, weights):
         popt, _ = curve_fit(model, days, weights, p0=p0, maxfev=10000)
         predicted = model(days, *popt)
         r2 = compute_r_squared(weights, predicted)
-        return {"predict": lambda t, p=popt: model(t, *p), "r_squared": r2}
+        std = np.std(weights - predicted)
+        return {"predict": lambda t, p=popt: model(t, *p), "r_squared": r2, "residual_std": std}
     except RuntimeError:
         return None
 
