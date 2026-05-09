@@ -17,7 +17,7 @@ COLORS = [
     "#4DD0E1",  # Cyan - Thomas
 ]
 
-ANIM_N_MIN = 5
+ANIM_N_MIN = 6
 ANIM_N_BANDS = 10
 ANIM_PROJ_POINTS = 150
 MODEL_ORDER = ["Thomas (2013)"]
@@ -28,7 +28,30 @@ def _hex_to_rgb(color):
     return int(h[:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
-def _build_animation_figure(df: pd.DataFrame) -> go.Figure:
+def _compute_y_range(df: pd.DataFrame, models: dict, last_day: float) -> list:
+    """Y range covering data + full-fit +/-3 sigma bands (BMI-filtered models excluded)."""
+    lows = [float(df["weight"].min())]
+    highs = [float(df["weight"].max())]
+    if models:
+        projection_days = np.linspace(0, last_day, 200)
+        last_data_day = df["days"].iloc[-1]
+        extrapolation = np.maximum(projection_days - last_data_day, 0)
+        scale = 1.0 + np.sqrt(extrapolation / max(last_data_day, 1.0))
+        for model in models.values():
+            if model is None:
+                continue
+            if model["predict"](last_day) < MIN_WEIGHT:
+                continue
+            predicted = np.array([model["predict"](d) for d in projection_days])
+            std = model.get("residual_std", 0)
+            lows.append(float(np.min(predicted - 3 * std * scale)))
+            highs.append(float(np.max(predicted + 3 * std * scale)))
+    span = max(highs) - min(lows)
+    margin = max(span * 0.05, 0.5)
+    return [min(lows) - margin, max(highs) + margin]
+
+
+def _build_animation_figure(df: pd.DataFrame, x_range: list, y_range: list) -> go.Figure:
     first_date = df["date"].iloc[0].to_pydatetime()
     last_day = (TARGET_DATE - first_date).days
     projection_days = np.linspace(0, last_day, ANIM_PROJ_POINTS)
@@ -38,65 +61,46 @@ def _build_animation_figure(df: pd.DataFrame) -> go.Figure:
     n_values = list(range(ANIM_N_MIN, n_max + 1))
     color_for = dict(zip(MODEL_ORDER, COLORS))
 
-    def traces_for_n(n):
+    def animated_traces_for_n(n):
         sub = df.iloc[:n]
         models = fit_all_models(sub["days"].values, sub["weight"].values)
-        last_data_day = sub["days"].iloc[-1]
         traces = []
         for m_name in MODEL_ORDER:
             color = color_for[m_name]
-            r, g, bcol = _hex_to_rgb(color)
             model = models.get(m_name)
             if model is not None and (not np.isnan(model["predict"](last_day))):
                 predicted = np.array([model["predict"](d) for d in projection_days])
-                std = model.get("residual_std", 0)
-                extrapolation = np.maximum(projection_days - last_data_day, 0)
-                scale = 1.0 + np.sqrt(extrapolation / max(last_data_day, 1.0))
-                for band_i in range(ANIM_N_BANDS, 0, -1):
-                    outer = band_i / ANIM_N_BANDS * 3.0
-                    inner = (band_i - 1) / ANIM_N_BANDS * 3.0
-                    opacity = 0.15 * (np.exp(-0.5 * inner ** 2) - np.exp(-0.5 * outer ** 2))
-                    upper = predicted + outer * std * scale
-                    lower = predicted - outer * std * scale
-                    traces.append(go.Scatter(
-                        x=projection_dates + projection_dates[::-1],
-                        y=np.concatenate([upper, lower[::-1]]).tolist(),
-                        fill="toself",
-                        fillcolor=f"rgba({r},{g},{bcol},{opacity:.3f})",
-                        line=dict(color="rgba(0,0,0,0)"),
-                        showlegend=False,
-                        hoverinfo="skip",
-                    ))
                 traces.append(go.Scatter(
                     x=projection_dates, y=predicted, mode="lines",
-                    name=m_name, line=dict(color=color, width=2),
+                    name=m_name, line=dict(color=color, width=2.5),
                 ))
             else:
-                for _ in range(ANIM_N_BANDS):
-                    traces.append(go.Scatter(x=[], y=[], showlegend=False, hoverinfo="skip"))
                 traces.append(go.Scatter(
-                    x=[], y=[], mode="lines", name=m_name, line=dict(color=color, width=2),
+                    x=[], y=[], mode="lines", name=m_name, line=dict(color=color, width=2.5),
                 ))
-        traces.append(go.Scatter(
-            x=sub["date"], y=sub["weight"], mode="markers+lines",
-            name="Actual Weight",
-            marker=dict(size=8, color="#ffffff"),
-            line=dict(color="#ffffff", width=1, dash="dot"),
-        ))
         return traces
 
-    frames = [go.Frame(data=traces_for_n(n), name=str(n)) for n in n_values]
-    initial_traces = list(frames[-1].data)
+    n_animated_traces = len(MODEL_ORDER)
+    animated_indices = list(range(n_animated_traces))
 
-    y_min = float(df["weight"].min()) - 5
-    y_max = float(df["weight"].max()) + 5
+    static_marker_trace = go.Scatter(
+        x=df["date"], y=df["weight"], mode="markers+lines",
+        name="Actual Weight",
+        marker=dict(size=8, color="#ffffff"),
+        line=dict(color="#ffffff", width=1, dash="dot"),
+    )
+
+    frames = [
+        go.Frame(data=animated_traces_for_n(n), traces=animated_indices, name=str(n))
+        for n in n_values
+    ]
+    initial_traces = list(frames[-1].data) + [static_marker_trace]
 
     fig = go.Figure(data=initial_traces, frames=frames)
     fig.update_layout(
         title=f"Evolution of fits as data accumulates (N = {ANIM_N_MIN} -> {n_max})",
-        xaxis_title="Date",
-        yaxis_title="Weight (kg)",
-        yaxis=dict(range=[y_min, y_max]),
+        xaxis=dict(title="Date", range=x_range),
+        yaxis=dict(title="Weight (kg)", range=y_range),
         template="plotly_dark",
         paper_bgcolor="#1a1a2e",
         plot_bgcolor="#16213e",
@@ -109,21 +113,19 @@ def _build_animation_figure(df: pd.DataFrame) -> go.Figure:
             "xanchor": "left", "yanchor": "top",
             "pad": {"r": 10, "t": 0},
             "bgcolor": "#16213e",
-            "bordercolor": "#3a3a5a",
+            "bordercolor": "#4DD0E1",
             "borderwidth": 1,
-            "font": {"color": "#e0e0e0"},
+            "font": {"color": "#4DD0E1"},
             "buttons": [
                 {
-                    "label": label,
+                    "label": "Play",
                     "method": "animate",
                     "args": [None, {
-                        "frame": {"duration": int(1200 / speed), "redraw": False},
+                        "frame": {"duration": 1200, "redraw": False},
                         "fromcurrent": False,
-                        "transition": {"duration": int(1200 / speed), "easing": "cubic-in-out"},
+                        "transition": {"duration": 1200, "easing": "cubic-in-out"},
                     }],
-                }
-                for label, speed in [("0.5x", 0.5), ("1x", 1.0)]
-            ] + [
+                },
                 {
                     "label": "Pause",
                     "method": "animate",
@@ -236,10 +238,13 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
         line=dict(color="#ffffff", width=1, dash="dot"),
     ))
 
+    x_range = [df["date"].iloc[0].to_pydatetime(), TARGET_DATE]
+    y_range = _compute_y_range(df, models, last_day)
+
     fig.update_layout(
         title="Ilaria - Weight Tracking & Projections",
-        xaxis_title="Date",
-        yaxis_title="Weight (kg)",
+        xaxis=dict(title="Date", range=x_range),
+        yaxis=dict(title="Weight (kg)", range=y_range),
         template="plotly_dark",
         paper_bgcolor="#1a1a2e",
         plot_bgcolor="#16213e",
@@ -248,7 +253,7 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
     )
 
     plot_json = fig.to_json()
-    anim_json = _build_animation_figure(df).to_json() if len(df) >= ANIM_N_MIN else None
+    anim_json = _build_animation_figure(df, x_range, y_range).to_json() if len(df) >= ANIM_N_MIN else None
 
     if anim_json:
         anim_html_block = (
