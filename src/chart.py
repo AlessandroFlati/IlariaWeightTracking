@@ -19,8 +19,8 @@ COLORS = [
 
 ANIM_N_MIN = 6
 ANIM_PROJ_POINTS = 150
-ANIM_INTERMEDIATE = 5
-ANIM_FRAME_MS = 80
+ANIM_INTERMEDIATE = 8
+ANIM_FRAME_MS = 110
 MODEL_ORDER = ["Thomas (2013)"]
 
 
@@ -129,6 +129,7 @@ def _build_animation_figure(df: pd.DataFrame, x_range: list, y_range: list) -> g
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         updatemenus=[{
             "type": "buttons",
+            "showactive": False,
             "direction": "left",
             "x": 0.0, "y": -0.1,
             "xanchor": "left", "yanchor": "top",
@@ -144,15 +145,6 @@ def _build_animation_figure(df: pd.DataFrame, x_range: list, y_range: list) -> g
                     "args": [None, {
                         "frame": {"duration": ANIM_FRAME_MS, "redraw": False},
                         "fromcurrent": False,
-                        "transition": {"duration": 0},
-                    }],
-                },
-                {
-                    "label": "Pause",
-                    "method": "animate",
-                    "args": [[None], {
-                        "frame": {"duration": 0, "redraw": False},
-                        "mode": "immediate",
                         "transition": {"duration": 0},
                     }],
                 },
