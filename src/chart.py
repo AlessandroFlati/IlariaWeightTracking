@@ -68,6 +68,17 @@ def _compute_y_range(df: pd.DataFrame, models: dict, last_day: float) -> list:
     return [min(lows) - margin, max(highs) + margin]
 
 
+_BMI_ZONES = [
+    (None, 16.0, "Severe underweight"),
+    (16.0, 18.5, "Underweight"),
+    (18.5, 25.0, "Optimal"),
+    (25.0, 30.0, "Overweight"),
+    (30.0, 35.0, "Obese I"),
+    (35.0, 40.0, "Obese II"),
+    (40.0, None, "Obese III"),
+]
+
+
 def _build_bmi_figure(df: pd.DataFrame, models: dict, x_range: list, weight_y_range: list) -> go.Figure:
     height_sq = HEIGHT_M ** 2
     bmi_y_range = [
@@ -90,9 +101,41 @@ def _build_bmi_figure(df: pd.DataFrame, models: dict, x_range: list, weight_y_ra
             type="rect",
             xref="paper", x0=0, x1=1,
             yref="y", y0=stripe_edges[i], y1=stripe_edges[i + 1],
-            fillcolor=f"rgba({rr},{gg},{bb},0.22)",
+            fillcolor=f"rgba({rr},{gg},{bb},0.45)",
             line=dict(width=0),
             layer="below",
+        ))
+
+    boundaries = [16.0, 18.5, 25.0, 30.0, 35.0, 40.0]
+    for boundary in boundaries:
+        if bmi_y_range[0] <= boundary <= bmi_y_range[1]:
+            shapes.append(dict(
+                type="line",
+                xref="paper", x0=0, x1=1,
+                yref="y", y0=boundary, y1=boundary,
+                line=dict(color="rgba(255,255,255,0.55)", width=1, dash="dash"),
+                layer="above",
+            ))
+
+    annotations = []
+    for low, high, label in _BMI_ZONES:
+        zone_low = bmi_y_range[0] if low is None else low
+        zone_high = bmi_y_range[1] if high is None else high
+        if zone_low > bmi_y_range[1] or zone_high < bmi_y_range[0]:
+            continue
+        visible_low = max(zone_low, bmi_y_range[0])
+        visible_high = min(zone_high, bmi_y_range[1])
+        if visible_high - visible_low < 0.4:
+            continue
+        annotations.append(dict(
+            xref="paper", yref="y",
+            x=0.01, y=0.5 * (visible_low + visible_high),
+            text=label,
+            showarrow=False,
+            font=dict(color="rgba(255,255,255,0.95)", size=11),
+            xanchor="left", yanchor="middle",
+            bgcolor="rgba(0,0,0,0.35)",
+            borderpad=3,
         ))
 
     fig = go.Figure()
@@ -146,6 +189,7 @@ def _build_bmi_figure(df: pd.DataFrame, models: dict, x_range: list, weight_y_ra
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         shapes=shapes,
+        annotations=annotations,
     )
     return fig
 
