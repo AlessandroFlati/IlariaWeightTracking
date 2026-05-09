@@ -18,8 +18,9 @@ COLORS = [
 ]
 
 ANIM_N_MIN = 6
-ANIM_N_BANDS = 10
 ANIM_PROJ_POINTS = 150
+ANIM_INTERMEDIATE = 5
+ANIM_FRAME_MS = 80
 MODEL_ORDER = ["Thomas (2013)"]
 
 
@@ -58,45 +59,65 @@ def _build_animation_figure(df: pd.DataFrame, x_range: list, y_range: list) -> g
     projection_dates = [first_date + timedelta(days=float(d)) for d in projection_days]
 
     n_max = len(df)
-    n_values = list(range(ANIM_N_MIN, n_max + 1))
-    color_for = dict(zip(MODEL_ORDER, COLORS))
+    color = COLORS[0]
+    model_name = MODEL_ORDER[0]
 
-    def animated_traces_for_n(n):
+    def predicted_for_n(n):
         sub = df.iloc[:n]
         models = fit_all_models(sub["days"].values, sub["weight"].values)
-        traces = []
-        for m_name in MODEL_ORDER:
-            color = color_for[m_name]
-            model = models.get(m_name)
-            if model is not None and (not np.isnan(model["predict"](last_day))):
-                predicted = np.array([model["predict"](d) for d in projection_days])
-                traces.append(go.Scatter(
-                    x=projection_dates, y=predicted, mode="lines",
-                    name=m_name, line=dict(color=color, width=2.5),
-                ))
+        model = models.get(model_name)
+        if model is None or np.isnan(model["predict"](last_day)):
+            return None
+        return np.array([model["predict"](d) for d in projection_days])
+
+    cached = {n: predicted_for_n(n) for n in range(ANIM_N_MIN, n_max + 1)}
+
+    def make_curve_trace(predicted):
+        if predicted is None:
+            return go.Scatter(x=[], y=[], mode="lines", name=model_name,
+                              line=dict(color=color, width=2.5))
+        return go.Scatter(
+            x=projection_dates, y=predicted, mode="lines",
+            name=model_name, line=dict(color=color, width=2.5),
+        )
+
+    def make_marker_trace(n):
+        sub = df.iloc[:n]
+        return go.Scatter(
+            x=sub["date"], y=sub["weight"], mode="markers+lines",
+            name="Actual Weight",
+            marker=dict(size=8, color="#ffffff"),
+            line=dict(color="#ffffff", width=1, dash="dot"),
+        )
+
+    frames = []
+    frames.append(go.Frame(
+        data=[make_curve_trace(cached[ANIM_N_MIN]), make_marker_trace(ANIM_N_MIN)],
+        traces=[0, 1],
+        name=str(ANIM_N_MIN),
+    ))
+    for n in range(ANIM_N_MIN, n_max):
+        pred_n = cached[n]
+        pred_n1 = cached[n + 1]
+        if pred_n is None or pred_n1 is None:
+            continue
+        for k in range(1, ANIM_INTERMEDIATE + 2):
+            t = k / (ANIM_INTERMEDIATE + 1)
+            blended = (1 - t) * pred_n + t * pred_n1
+            if k == ANIM_INTERMEDIATE + 1:
+                marker_count = n + 1
+                name = str(n + 1)
             else:
-                traces.append(go.Scatter(
-                    x=[], y=[], mode="lines", name=m_name, line=dict(color=color, width=2.5),
-                ))
-        return traces
+                marker_count = n
+                name = f"{n}.{k}"
+            frames.append(go.Frame(
+                data=[make_curve_trace(blended), make_marker_trace(marker_count)],
+                traces=[0, 1],
+                name=name,
+            ))
 
-    n_animated_traces = len(MODEL_ORDER)
-    animated_indices = list(range(n_animated_traces))
-
-    static_marker_trace = go.Scatter(
-        x=df["date"], y=df["weight"], mode="markers+lines",
-        name="Actual Weight",
-        marker=dict(size=8, color="#ffffff"),
-        line=dict(color="#ffffff", width=1, dash="dot"),
-    )
-
-    frames = [
-        go.Frame(data=animated_traces_for_n(n), traces=animated_indices, name=str(n))
-        for n in n_values
-    ]
-    initial_traces = list(frames[-1].data) + [static_marker_trace]
-
-    fig = go.Figure(data=initial_traces, frames=frames)
+    initial_data = list(frames[-1].data)
+    fig = go.Figure(data=initial_data, frames=frames)
     fig.update_layout(
         title=f"Evolution of fits as data accumulates (N = {ANIM_N_MIN} -> {n_max})",
         xaxis=dict(title="Date", range=x_range),
@@ -109,7 +130,7 @@ def _build_animation_figure(df: pd.DataFrame, x_range: list, y_range: list) -> g
         updatemenus=[{
             "type": "buttons",
             "direction": "left",
-            "x": 0.0, "y": -0.15,
+            "x": 0.0, "y": -0.1,
             "xanchor": "left", "yanchor": "top",
             "pad": {"r": 10, "t": 0},
             "bgcolor": "#16213e",
@@ -121,9 +142,9 @@ def _build_animation_figure(df: pd.DataFrame, x_range: list, y_range: list) -> g
                     "label": "Play",
                     "method": "animate",
                     "args": [None, {
-                        "frame": {"duration": 1200, "redraw": False},
+                        "frame": {"duration": ANIM_FRAME_MS, "redraw": False},
                         "fromcurrent": False,
-                        "transition": {"duration": 1200, "easing": "cubic-in-out"},
+                        "transition": {"duration": 0},
                     }],
                 },
                 {
@@ -135,35 +156,6 @@ def _build_animation_figure(df: pd.DataFrame, x_range: list, y_range: list) -> g
                         "transition": {"duration": 0},
                     }],
                 },
-            ],
-        }],
-        sliders=[{
-            "active": len(frames) - 1,
-            "x": 0.22, "y": -0.15, "len": 0.76,
-            "xanchor": "left", "yanchor": "top",
-            "bgcolor": "#3a3a5a",
-            "bordercolor": "#3a3a5a",
-            "activebgcolor": "#64B5F6",
-            "tickcolor": "#a0a0c0",
-            "font": {"color": "#e0e0e0"},
-            "currentvalue": {
-                "prefix": "N = ",
-                "visible": True,
-                "xanchor": "right",
-                "font": {"color": "#e0e0e0"},
-            },
-            "transition": {"duration": 700, "easing": "cubic-in-out"},
-            "steps": [
-                {
-                    "method": "animate",
-                    "args": [[f.name], {
-                        "mode": "immediate",
-                        "frame": {"duration": 700, "redraw": False},
-                        "transition": {"duration": 700, "easing": "cubic-in-out"},
-                    }],
-                    "label": f.name,
-                }
-                for f in frames
             ],
         }],
     )
