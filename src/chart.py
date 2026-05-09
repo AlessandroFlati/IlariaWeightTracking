@@ -237,6 +237,23 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
     plot_json = fig.to_json()
     anim_json = _build_animation_figure(df).to_json() if len(df) >= ANIM_N_MIN else None
 
+    if anim_json:
+        anim_html_block = (
+            "<div class='section-caption'>Curve evolution as data accumulates "
+            "&mdash; press Play or drag the slider</div>"
+            "<div id='animation'></div>"
+        )
+        anim_script_block = (
+            "var animFig = " + anim_json + ";\n"
+            "        Plotly.newPlot('animation', animFig.data, animFig.layout, "
+            "{responsive: true}).then(function() { "
+            "if (animFig.frames && animFig.frames.length) { "
+            "Plotly.addFrames('animation', animFig.frames); } });"
+        )
+    else:
+        anim_html_block = ""
+        anim_script_block = ""
+
     table_html = "<table><thead><tr>"
     table_html += "<th>Model</th><th>R&sup2;</th><th>Mean</th>"
     table_html += "<th>&plusmn;1&sigma; (68%)</th>"
@@ -340,7 +357,7 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
 <body>
     <h1>Ilaria - Weight Tracking & Projections</h1>
     <div id="chart"></div>
-    {("<div class='section-caption'>Curve evolution as data accumulates &mdash; press Play or drag the slider</div><div id='animation'></div>") if anim_json else ""}
+    {anim_html_block}
     {table_html}
     {data_table_html}
     {"<div class='filtered'>Filtered out (unrealistic, BMI &lt; 18.5 at year end): " + ", ".join(filtered_models) + "</div>" if filtered_models else ""}
@@ -352,7 +369,7 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
     <script>
         var figure = {plot_json};
         Plotly.newPlot('chart', figure.data, figure.layout, {{responsive: true}});
-        {("var animFig = " + anim_json + ";\n        Plotly.newPlot('animation', animFig.data, animFig.layout, {responsive: true}).then(function() { if (animFig.frames && animFig.frames.length) { Plotly.addFrames('animation', animFig.frames); } });") if anim_json else ""}
+        {anim_script_block}
     </script>
 </body>
 </html>"""
