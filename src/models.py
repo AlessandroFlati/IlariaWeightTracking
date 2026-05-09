@@ -16,20 +16,6 @@ def _fit_polynomial(days, weights, degree):
     std = np.std(weights - predicted)
     return {"predict": lambda t, p=poly: p(t), "r_squared": r2, "residual_std": std}
 
-def _fit_hall_linearized(days, weights):
-    def model(t, w_final, w0, tau):
-        return w_final + (w0 - w_final) * np.exp(-t / tau)
-
-    try:
-        p0 = [weights[-1] - 5, weights[0], 200.0]
-        popt, _ = curve_fit(model, days, weights, p0=p0, maxfev=10000)
-        predicted = model(days, *popt)
-        r2 = compute_r_squared(weights, predicted)
-        std = np.std(weights - predicted)
-        return {"predict": lambda t, p=popt: model(t, *p), "r_squared": r2, "residual_std": std}
-    except RuntimeError:
-        return None
-
 def _fit_thomas(days, weights):
     def model(t, w0, delta_w, k):
         return w0 - delta_w * (1 - np.exp(-k * t))
@@ -47,10 +33,6 @@ def _fit_thomas(days, weights):
 def fit_all_models(days: np.ndarray, weights: np.ndarray) -> dict:
     results = {}
     results["Linear"] = _fit_polynomial(days, weights, 1)
-
-    hall_result = _fit_hall_linearized(days, weights)
-    if hall_result:
-        results["Hall Linearized (2011)"] = hall_result
 
     thomas_result = _fit_thomas(days, weights)
     if thomas_result:

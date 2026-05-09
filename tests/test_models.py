@@ -8,7 +8,6 @@ def test_fit_all_models_returns_dict():
     assert isinstance(results, dict)
     expected_names = [
         "Linear",
-        "Hall Linearized (2011)",
         "Thomas (2013)",
     ]
     for name in expected_names:

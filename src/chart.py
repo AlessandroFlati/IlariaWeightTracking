@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
+from src.models import fit_all_models
+
 TARGET_DATE = datetime(2026, 12, 31)
 HEIGHT_M = 1.75
 MIN_BMI = 18.5
@@ -13,9 +15,142 @@ MIN_WEIGHT = MIN_BMI * HEIGHT_M ** 2
 
 COLORS = [
     "#64B5F6",  # Blue - Linear
-    "#E57373",  # Red - Hall
     "#4DD0E1",  # Cyan - Thomas
 ]
+
+ANIM_N_MIN = 5
+ANIM_N_BANDS = 10
+ANIM_PROJ_POINTS = 150
+MODEL_ORDER = ["Linear", "Thomas (2013)"]
+
+
+def _hex_to_rgb(color):
+    h = color.lstrip("#")
+    return int(h[:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _build_animation_figure(df: pd.DataFrame) -> go.Figure:
+    first_date = df["date"].iloc[0].to_pydatetime()
+    last_day = (TARGET_DATE - first_date).days
+    projection_days = np.linspace(0, last_day, ANIM_PROJ_POINTS)
+    projection_dates = [first_date + timedelta(days=float(d)) for d in projection_days]
+
+    n_max = len(df)
+    n_values = list(range(ANIM_N_MIN, n_max + 1))
+    color_for = dict(zip(MODEL_ORDER, COLORS))
+
+    def traces_for_n(n):
+        sub = df.iloc[:n]
+        models = fit_all_models(sub["days"].values, sub["weight"].values)
+        last_data_day = sub["days"].iloc[-1]
+        traces = []
+        for m_name in MODEL_ORDER:
+            color = color_for[m_name]
+            r, g, bcol = _hex_to_rgb(color)
+            model = models.get(m_name)
+            if model is not None and (not np.isnan(model["predict"](last_day))):
+                predicted = np.array([model["predict"](d) for d in projection_days])
+                std = model.get("residual_std", 0)
+                extrapolation = np.maximum(projection_days - last_data_day, 0)
+                scale = 1.0 + np.sqrt(extrapolation / max(last_data_day, 1.0))
+                for band_i in range(ANIM_N_BANDS, 0, -1):
+                    outer = band_i / ANIM_N_BANDS * 3.0
+                    inner = (band_i - 1) / ANIM_N_BANDS * 3.0
+                    opacity = 0.15 * (np.exp(-0.5 * inner ** 2) - np.exp(-0.5 * outer ** 2))
+                    upper = predicted + outer * std * scale
+                    lower = predicted - outer * std * scale
+                    traces.append(go.Scatter(
+                        x=projection_dates + projection_dates[::-1],
+                        y=np.concatenate([upper, lower[::-1]]).tolist(),
+                        fill="toself",
+                        fillcolor=f"rgba({r},{g},{bcol},{opacity:.3f})",
+                        line=dict(color="rgba(0,0,0,0)"),
+                        showlegend=False,
+                        hoverinfo="skip",
+                    ))
+                traces.append(go.Scatter(
+                    x=projection_dates, y=predicted, mode="lines",
+                    name=m_name, line=dict(color=color, width=2),
+                ))
+            else:
+                for _ in range(ANIM_N_BANDS):
+                    traces.append(go.Scatter(x=[], y=[], showlegend=False, hoverinfo="skip"))
+                traces.append(go.Scatter(
+                    x=[], y=[], mode="lines", name=m_name, line=dict(color=color, width=2),
+                ))
+        traces.append(go.Scatter(
+            x=sub["date"], y=sub["weight"], mode="markers+lines",
+            name="Actual Weight",
+            marker=dict(size=8, color="#ffffff"),
+            line=dict(color="#ffffff", width=1, dash="dot"),
+        ))
+        return traces
+
+    frames = [go.Frame(data=traces_for_n(n), name=str(n)) for n in n_values]
+    initial_traces = list(frames[-1].data)
+
+    y_min = float(df["weight"].min()) - 5
+    y_max = float(df["weight"].max()) + 5
+
+    fig = go.Figure(data=initial_traces, frames=frames)
+    fig.update_layout(
+        title=f"Evolution of fits as data accumulates (N = {ANIM_N_MIN} -> {n_max})",
+        xaxis_title="Date",
+        yaxis_title="Weight (kg)",
+        yaxis=dict(range=[y_min, y_max]),
+        template="plotly_dark",
+        paper_bgcolor="#1a1a2e",
+        plot_bgcolor="#16213e",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        updatemenus=[{
+            "type": "buttons",
+            "direction": "left",
+            "x": 0.0, "y": -0.15,
+            "xanchor": "left", "yanchor": "top",
+            "pad": {"r": 10, "t": 0},
+            "buttons": [
+                {
+                    "label": "Play",
+                    "method": "animate",
+                    "args": [None, {
+                        "frame": {"duration": 700, "redraw": True},
+                        "fromcurrent": False,
+                        "transition": {"duration": 500, "easing": "cubic-in-out"},
+                    }],
+                },
+                {
+                    "label": "Pause",
+                    "method": "animate",
+                    "args": [[None], {
+                        "frame": {"duration": 0, "redraw": False},
+                        "mode": "immediate",
+                        "transition": {"duration": 0},
+                    }],
+                },
+            ],
+        }],
+        sliders=[{
+            "active": len(frames) - 1,
+            "x": 0.12, "y": -0.15, "len": 0.85,
+            "xanchor": "left", "yanchor": "top",
+            "currentvalue": {"prefix": "N = ", "visible": True, "xanchor": "right"},
+            "transition": {"duration": 400, "easing": "cubic-in-out"},
+            "steps": [
+                {
+                    "method": "animate",
+                    "args": [[f.name], {
+                        "mode": "immediate",
+                        "frame": {"duration": 400, "redraw": True},
+                        "transition": {"duration": 400, "easing": "cubic-in-out"},
+                    }],
+                    "label": f.name,
+                }
+                for f in frames
+            ],
+        }],
+    )
+    return fig
 
 
 def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
@@ -98,6 +233,7 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
     )
 
     plot_json = fig.to_json()
+    anim_json = _build_animation_figure(df).to_json() if len(df) >= ANIM_N_MIN else None
 
     table_html = "<table><thead><tr>"
     table_html += "<th>Model</th><th>R&sup2;</th><th>Mean</th>"
@@ -146,12 +282,24 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
             margin-bottom: 30px;
             color: #f0f0f0;
         }}
-        #chart {{
+        #chart, #animation {{
             width: 100%;
             height: 500px;
             background: #1a1a2e;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        }}
+        #animation {{
+            margin-top: 30px;
+            height: 560px;
+        }}
+        .section-caption {{
+            text-align: center;
+            margin-top: 35px;
+            margin-bottom: 8px;
+            color: #a0a0c0;
+            font-size: 0.95em;
+            font-weight: 300;
         }}
         table {{
             width: 100%;
@@ -190,6 +338,7 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
 <body>
     <h1>Ilaria - Weight Tracking & Projections</h1>
     <div id="chart"></div>
+    {("<div class='section-caption'>Curve evolution as data accumulates &mdash; press Play or drag the slider</div><div id='animation'></div>") if anim_json else ""}
     {table_html}
     {data_table_html}
     {"<div class='filtered'>Filtered out (unrealistic, BMI &lt; 18.5 at year end): " + ", ".join(filtered_models) + "</div>" if filtered_models else ""}
@@ -201,6 +350,7 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
     <script>
         var figure = {plot_json};
         Plotly.newPlot('chart', figure.data, figure.layout, {{responsive: true}});
+        {("var animFig = " + anim_json + ";\n        Plotly.newPlot('animation', animFig.data, animFig.layout, {responsive: true}).then(function() { if (animFig.frames && animFig.frames.length) { Plotly.addFrames('animation', animFig.frames); } });") if anim_json else ""}
     </script>
 </body>
 </html>"""
