@@ -111,14 +111,16 @@ def _build_animation_figure(df: pd.DataFrame) -> go.Figure:
             "pad": {"r": 10, "t": 0},
             "buttons": [
                 {
-                    "label": "Play",
+                    "label": label,
                     "method": "animate",
                     "args": [None, {
-                        "frame": {"duration": 700, "redraw": True},
+                        "frame": {"duration": int(700 / speed), "redraw": True},
                         "fromcurrent": False,
-                        "transition": {"duration": 500, "easing": "cubic-in-out"},
+                        "transition": {"duration": int(500 / speed), "easing": "cubic-in-out"},
                     }],
-                },
+                }
+                for label, speed in [("0.5x", 0.5), ("1x", 1.0), ("2x", 2.0), ("4x", 4.0)]
+            ] + [
                 {
                     "label": "Pause",
                     "method": "animate",
@@ -132,7 +134,7 @@ def _build_animation_figure(df: pd.DataFrame) -> go.Figure:
         }],
         sliders=[{
             "active": len(frames) - 1,
-            "x": 0.12, "y": -0.15, "len": 0.85,
+            "x": 0.30, "y": -0.15, "len": 0.68,
             "xanchor": "left", "yanchor": "top",
             "currentvalue": {"prefix": "N = ", "visible": True, "xanchor": "right"},
             "transition": {"duration": 400, "easing": "cubic-in-out"},
