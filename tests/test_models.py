@@ -8,9 +8,6 @@ def test_fit_all_models_returns_dict():
     assert isinstance(results, dict)
     expected_names = [
         "Linear",
-        "Polynomial (degree 2)",
-        "Polynomial (degree 3)",
-        "Exponential Decay",
         "Hall Linearized (2011)",
         "Thomas (2013)",
     ]

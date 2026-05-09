@@ -16,20 +16,6 @@ def _fit_polynomial(days, weights, degree):
     std = np.std(weights - predicted)
     return {"predict": lambda t, p=poly: p(t), "r_squared": r2, "residual_std": std}
 
-def _fit_exponential_decay(days, weights):
-    def model(t, a, b, c):
-        return a * np.exp(-b * t) + c
-
-    try:
-        p0 = [weights[0] - weights[-1], 0.01, weights[-1]]
-        popt, _ = curve_fit(model, days, weights, p0=p0, maxfev=10000)
-        predicted = model(days, *popt)
-        r2 = compute_r_squared(weights, predicted)
-        std = np.std(weights - predicted)
-        return {"predict": lambda t, p=popt: model(t, *p), "r_squared": r2, "residual_std": std}
-    except RuntimeError:
-        return None
-
 def _fit_hall_linearized(days, weights):
     def model(t, w_final, w0, tau):
         return w_final + (w0 - w_final) * np.exp(-t / tau)
@@ -61,12 +47,6 @@ def _fit_thomas(days, weights):
 def fit_all_models(days: np.ndarray, weights: np.ndarray) -> dict:
     results = {}
     results["Linear"] = _fit_polynomial(days, weights, 1)
-    results["Polynomial (degree 2)"] = _fit_polynomial(days, weights, 2)
-    results["Polynomial (degree 3)"] = _fit_polynomial(days, weights, 3)
-
-    exp_result = _fit_exponential_decay(days, weights)
-    if exp_result:
-        results["Exponential Decay"] = exp_result
 
     hall_result = _fit_hall_linearized(days, weights)
     if hall_result:

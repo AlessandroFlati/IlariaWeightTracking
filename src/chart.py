@@ -13,9 +13,6 @@ MIN_WEIGHT = MIN_BMI * HEIGHT_M ** 2
 
 COLORS = [
     "#64B5F6",  # Blue - Linear
-    "#FFB74D",  # Orange - Poly 2
-    "#CE93D8",  # Purple - Poly 3
-    "#81C784",  # Green - Exponential
     "#E57373",  # Red - Hall
     "#4DD0E1",  # Cyan - Thomas
 ]
