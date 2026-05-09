@@ -18,7 +18,8 @@ COLORS = [
 ]
 
 ANIM_N_MIN = 6
-ANIM_PROJ_POINTS = 150
+ANIM_PROJ_POINTS = 80
+ANIM_N_BANDS = 5
 ANIM_INTERMEDIATE = 8
 ANIM_FRAME_MS = 110
 MODEL_ORDER = ["Thomas (2013)"]
@@ -57,53 +58,106 @@ def _build_animation_figure(df: pd.DataFrame, x_range: list, y_range: list) -> g
     last_day = (TARGET_DATE - first_date).days
     projection_days = np.linspace(0, last_day, ANIM_PROJ_POINTS)
     projection_dates = [first_date + timedelta(days=float(d)) for d in projection_days]
+    band_x = projection_dates + projection_dates[::-1]
 
     n_max = len(df)
     color = COLORS[0]
+    r, g, b = _hex_to_rgb(color)
     model_name = MODEL_ORDER[0]
 
-    def predicted_for_n(n):
+    band_outer = [(i / ANIM_N_BANDS) * 3.0 for i in range(ANIM_N_BANDS, 0, -1)]
+    band_inner = [((i - 1) / ANIM_N_BANDS) * 3.0 for i in range(ANIM_N_BANDS, 0, -1)]
+    band_opacities = [
+        0.15 * (np.exp(-0.5 * inner ** 2) - np.exp(-0.5 * outer ** 2))
+        for inner, outer in zip(band_inner, band_outer)
+    ]
+
+    def fit_data_for_n(n):
         sub = df.iloc[:n]
         models = fit_all_models(sub["days"].values, sub["weight"].values)
         model = models.get(model_name)
         if model is None or np.isnan(model["predict"](last_day)):
             return None
-        return np.array([model["predict"](d) for d in projection_days])
+        predicted = np.array([model["predict"](d) for d in projection_days])
+        std = model.get("residual_std", 0)
+        last_data_day_n = sub["days"].iloc[-1]
+        extrapolation = np.maximum(projection_days - last_data_day_n, 0)
+        scale = 1.0 + np.sqrt(extrapolation / max(last_data_day_n, 1.0))
+        bands = []
+        for outer in band_outer:
+            bands.append({
+                "upper": predicted + outer * std * scale,
+                "lower": predicted - outer * std * scale,
+            })
+        return {"predicted": predicted, "bands": bands}
 
-    cached = {n: predicted_for_n(n) for n in range(ANIM_N_MIN, n_max + 1)}
+    cached = {n: fit_data_for_n(n) for n in range(ANIM_N_MIN, n_max + 1)}
 
-    def make_curve_trace(predicted):
-        if predicted is None:
-            return go.Scatter(x=[], y=[], mode="lines", name=model_name,
-                              line=dict(color=color, width=2.5))
-        return go.Scatter(
-            x=projection_dates, y=predicted, mode="lines",
-            name=model_name, line=dict(color=color, width=2.5),
-        )
+    def blend(data_n, data_n1, t):
+        if data_n is None or data_n1 is None:
+            return None
+        blended_bands = [
+            {
+                "upper": (1 - t) * b_n["upper"] + t * b_n1["upper"],
+                "lower": (1 - t) * b_n["lower"] + t * b_n1["lower"],
+            }
+            for b_n, b_n1 in zip(data_n["bands"], data_n1["bands"])
+        ]
+        return {
+            "predicted": (1 - t) * data_n["predicted"] + t * data_n1["predicted"],
+            "bands": blended_bands,
+        }
 
-    def make_marker_trace(n):
-        sub = df.iloc[:n]
-        return go.Scatter(
+    def make_traces(data, marker_count):
+        traces = []
+        if data is not None:
+            for band, opacity in zip(data["bands"], band_opacities):
+                traces.append(go.Scatter(
+                    x=band_x,
+                    y=np.concatenate([band["upper"], band["lower"][::-1]]).tolist(),
+                    fill="toself",
+                    fillcolor=f"rgba({r},{g},{b},{opacity:.3f})",
+                    line=dict(color="rgba(0,0,0,0)"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                ))
+            traces.append(go.Scatter(
+                x=projection_dates, y=data["predicted"], mode="lines",
+                name=model_name, line=dict(color=color, width=2.5),
+            ))
+        else:
+            for _ in range(ANIM_N_BANDS):
+                traces.append(go.Scatter(x=[], y=[], showlegend=False, hoverinfo="skip"))
+            traces.append(go.Scatter(
+                x=[], y=[], mode="lines", name=model_name,
+                line=dict(color=color, width=2.5),
+            ))
+        sub = df.iloc[:marker_count]
+        traces.append(go.Scatter(
             x=sub["date"], y=sub["weight"], mode="markers+lines",
             name="Actual Weight",
             marker=dict(size=8, color="#ffffff"),
             line=dict(color="#ffffff", width=1, dash="dot"),
-        )
+        ))
+        return traces
+
+    n_total_traces = ANIM_N_BANDS + 2
+    animated_indices = list(range(n_total_traces))
 
     frames = []
     frames.append(go.Frame(
-        data=[make_curve_trace(cached[ANIM_N_MIN]), make_marker_trace(ANIM_N_MIN)],
-        traces=[0, 1],
+        data=make_traces(cached[ANIM_N_MIN], ANIM_N_MIN),
+        traces=animated_indices,
         name=str(ANIM_N_MIN),
     ))
     for n in range(ANIM_N_MIN, n_max):
-        pred_n = cached[n]
-        pred_n1 = cached[n + 1]
-        if pred_n is None or pred_n1 is None:
+        data_n = cached[n]
+        data_n1 = cached[n + 1]
+        if data_n is None or data_n1 is None:
             continue
         for k in range(1, ANIM_INTERMEDIATE + 2):
             t = k / (ANIM_INTERMEDIATE + 1)
-            blended = (1 - t) * pred_n + t * pred_n1
+            blended = blend(data_n, data_n1, t)
             if k == ANIM_INTERMEDIATE + 1:
                 marker_count = n + 1
                 name = str(n + 1)
@@ -111,8 +165,8 @@ def _build_animation_figure(df: pd.DataFrame, x_range: list, y_range: list) -> g
                 marker_count = n
                 name = f"{n}.{k}"
             frames.append(go.Frame(
-                data=[make_curve_trace(blended), make_marker_trace(marker_count)],
-                traces=[0, 1],
+                data=make_traces(blended, marker_count),
+                traces=animated_indices,
                 name=name,
             ))
 
