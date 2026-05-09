@@ -14,14 +14,13 @@ MIN_BMI = 18.5
 MIN_WEIGHT = MIN_BMI * HEIGHT_M ** 2
 
 COLORS = [
-    "#64B5F6",  # Blue - Linear
     "#4DD0E1",  # Cyan - Thomas
 ]
 
 ANIM_N_MIN = 5
 ANIM_N_BANDS = 10
 ANIM_PROJ_POINTS = 150
-MODEL_ORDER = ["Linear", "Thomas (2013)"]
+MODEL_ORDER = ["Thomas (2013)"]
 
 
 def _hex_to_rgb(color):
@@ -109,17 +108,21 @@ def _build_animation_figure(df: pd.DataFrame) -> go.Figure:
             "x": 0.0, "y": -0.15,
             "xanchor": "left", "yanchor": "top",
             "pad": {"r": 10, "t": 0},
+            "bgcolor": "#16213e",
+            "bordercolor": "#3a3a5a",
+            "borderwidth": 1,
+            "font": {"color": "#e0e0e0"},
             "buttons": [
                 {
                     "label": label,
                     "method": "animate",
                     "args": [None, {
-                        "frame": {"duration": int(700 / speed), "redraw": True},
+                        "frame": {"duration": int(1200 / speed), "redraw": False},
                         "fromcurrent": False,
-                        "transition": {"duration": int(500 / speed), "easing": "cubic-in-out"},
+                        "transition": {"duration": int(1200 / speed), "easing": "cubic-in-out"},
                     }],
                 }
-                for label, speed in [("0.5x", 0.5), ("1x", 1.0), ("2x", 2.0), ("4x", 4.0)]
+                for label, speed in [("0.5x", 0.5), ("1x", 1.0)]
             ] + [
                 {
                     "label": "Pause",
@@ -134,17 +137,27 @@ def _build_animation_figure(df: pd.DataFrame) -> go.Figure:
         }],
         sliders=[{
             "active": len(frames) - 1,
-            "x": 0.30, "y": -0.15, "len": 0.68,
+            "x": 0.22, "y": -0.15, "len": 0.76,
             "xanchor": "left", "yanchor": "top",
-            "currentvalue": {"prefix": "N = ", "visible": True, "xanchor": "right"},
-            "transition": {"duration": 400, "easing": "cubic-in-out"},
+            "bgcolor": "#3a3a5a",
+            "bordercolor": "#3a3a5a",
+            "activebgcolor": "#64B5F6",
+            "tickcolor": "#a0a0c0",
+            "font": {"color": "#e0e0e0"},
+            "currentvalue": {
+                "prefix": "N = ",
+                "visible": True,
+                "xanchor": "right",
+                "font": {"color": "#e0e0e0"},
+            },
+            "transition": {"duration": 700, "easing": "cubic-in-out"},
             "steps": [
                 {
                     "method": "animate",
                     "args": [[f.name], {
                         "mode": "immediate",
-                        "frame": {"duration": 400, "redraw": True},
-                        "transition": {"duration": 400, "easing": "cubic-in-out"},
+                        "frame": {"duration": 700, "redraw": False},
+                        "transition": {"duration": 700, "easing": "cubic-in-out"},
                     }],
                     "label": f.name,
                 }

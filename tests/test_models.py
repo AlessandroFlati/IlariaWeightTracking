@@ -6,10 +6,7 @@ def test_fit_all_models_returns_dict():
     weights = np.array([95, 94, 93, 92.5, 92, 91.5], dtype=float)
     results = fit_all_models(days, weights)
     assert isinstance(results, dict)
-    expected_names = [
-        "Linear",
-        "Thomas (2013)",
-    ]
+    expected_names = ["Thomas (2013)"]
     for name in expected_names:
         assert name in results, f"Missing model: {name}"
         assert "predict" in results[name]
@@ -17,11 +14,11 @@ def test_fit_all_models_returns_dict():
         assert callable(results[name]["predict"])
         assert 0 <= results[name]["r_squared"] <= 1.0
 
-def test_linear_model_predicts_decrease():
+def test_thomas_model_predicts_decrease():
     days = np.array([0, 10, 20, 30, 40, 50], dtype=float)
     weights = np.array([95, 94, 93, 92.5, 92, 91.5], dtype=float)
     results = fit_all_models(days, weights)
-    predict = results["Linear"]["predict"]
+    predict = results["Thomas (2013)"]["predict"]
     assert predict(100) < predict(0)
 
 def test_compute_r_squared():
