@@ -30,6 +30,21 @@ def _hex_to_rgb(color):
     return int(h[:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
+_BMI_KNOTS = [16.0, 18.5, 21.75, 25.0, 30.0, 35.0, 40.0]
+_BMI_R = [180, 220, 60, 220, 220, 200, 160]
+_BMI_G = [0, 200, 180, 200, 130, 60, 0]
+_BMI_B = [0, 80, 60, 80, 50, 30, 0]
+
+
+def _bmi_rgb(bmi: float) -> tuple:
+    bmi = max(min(bmi, _BMI_KNOTS[-1]), _BMI_KNOTS[0])
+    return (
+        int(np.interp(bmi, _BMI_KNOTS, _BMI_R)),
+        int(np.interp(bmi, _BMI_KNOTS, _BMI_G)),
+        int(np.interp(bmi, _BMI_KNOTS, _BMI_B)),
+    )
+
+
 def _compute_y_range(df: pd.DataFrame, models: dict, last_day: float) -> list:
     """Y range covering data + full-fit +/-3 sigma bands (BMI-filtered models excluded)."""
     lows = [float(df["weight"].min())]
@@ -51,6 +66,88 @@ def _compute_y_range(df: pd.DataFrame, models: dict, last_day: float) -> list:
     span = max(highs) - min(lows)
     margin = max(span * 0.05, 0.5)
     return [min(lows) - margin, max(highs) + margin]
+
+
+def _build_bmi_figure(df: pd.DataFrame, models: dict, x_range: list, weight_y_range: list) -> go.Figure:
+    height_sq = HEIGHT_M ** 2
+    bmi_y_range = [
+        min(17.0, weight_y_range[0] / height_sq),
+        max(33.0, weight_y_range[1] / height_sq),
+    ]
+
+    first_date = df["date"].iloc[0].to_pydatetime()
+    last_day = (TARGET_DATE - first_date).days
+    projection_days = np.linspace(0, last_day, 500)
+    projection_dates = [first_date + timedelta(days=float(d)) for d in projection_days]
+
+    n_stripes = 80
+    stripe_edges = np.linspace(bmi_y_range[0], bmi_y_range[1], n_stripes + 1)
+    shapes = []
+    for i in range(n_stripes):
+        bmi_mid = 0.5 * (stripe_edges[i] + stripe_edges[i + 1])
+        rr, gg, bb = _bmi_rgb(bmi_mid)
+        shapes.append(dict(
+            type="rect",
+            xref="paper", x0=0, x1=1,
+            yref="y", y0=stripe_edges[i], y1=stripe_edges[i + 1],
+            fillcolor=f"rgba({rr},{gg},{bb},0.22)",
+            line=dict(width=0),
+            layer="below",
+        ))
+
+    fig = go.Figure()
+    color_idx = 0
+    for name, model in models.items():
+        if model["predict"](last_day) < MIN_WEIGHT:
+            continue
+        color = COLORS[color_idx % len(COLORS)]
+        color_idx += 1
+        predicted_bmi = np.array([model["predict"](d) for d in projection_days]) / height_sq
+        std_bmi = model.get("residual_std", 0) / height_sq
+        last_data_day = df["days"].iloc[-1]
+        extrapolation = np.maximum(projection_days - last_data_day, 0)
+        scale = 1.0 + np.sqrt(extrapolation / max(last_data_day, 1.0))
+        rr, gg, bb = _hex_to_rgb(color)
+        n_bands = 20
+        for band_i in range(n_bands, 0, -1):
+            outer = band_i / n_bands * 3.0
+            inner = (band_i - 1) / n_bands * 3.0
+            opacity = 0.15 * (np.exp(-0.5 * inner ** 2) - np.exp(-0.5 * outer ** 2))
+            upper = predicted_bmi + outer * std_bmi * scale
+            lower = predicted_bmi - outer * std_bmi * scale
+            fig.add_trace(go.Scatter(
+                x=projection_dates + projection_dates[::-1],
+                y=np.concatenate([upper, lower[::-1]]).tolist(),
+                fill="toself",
+                fillcolor=f"rgba({rr},{gg},{bb},{opacity:.3f})",
+                line=dict(color="rgba(0,0,0,0)"),
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+        fig.add_trace(go.Scatter(
+            x=projection_dates, y=predicted_bmi, mode="lines",
+            name=name, line=dict(color=color, width=2),
+        ))
+
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["weight"] / height_sq, mode="markers+lines",
+        name="Actual BMI",
+        marker=dict(size=8, color="#ffffff"),
+        line=dict(color="#ffffff", width=1, dash="dot"),
+    ))
+
+    fig.update_layout(
+        title=f"Ilaria - BMI Tracking (height {HEIGHT_M:.2f} m)",
+        xaxis=dict(title="Date", range=x_range),
+        yaxis=dict(title="BMI", range=bmi_y_range),
+        template="plotly_dark",
+        paper_bgcolor="#1a1a2e",
+        plot_bgcolor="#16213e",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        shapes=shapes,
+    )
+    return fig
 
 
 def _build_animation_figure(df: pd.DataFrame, x_range: list, y_range: list) -> go.Figure:
@@ -292,6 +389,7 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
 
     plot_json = fig.to_json()
     anim_json = _build_animation_figure(df, x_range, y_range).to_json() if len(df) >= ANIM_N_MIN else None
+    bmi_json = _build_bmi_figure(df, models, x_range, y_range).to_json()
 
     if anim_json:
         anim_html_block = (
@@ -357,12 +455,15 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
             margin-bottom: 30px;
             color: #f0f0f0;
         }}
-        #chart, #animation {{
+        #chart, #animation, #bmi-chart {{
             width: 100%;
             height: 500px;
             background: #1a1a2e;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        }}
+        #bmi-chart {{
+            margin-top: 30px;
         }}
         #animation {{
             margin-top: 30px;
@@ -417,6 +518,8 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
     {table_html}
     {data_table_html}
     {"<div class='filtered'>Filtered out (unrealistic, BMI &lt; 18.5 at year end): " + ", ".join(filtered_models) + "</div>" if filtered_models else ""}
+    <div class="section-caption">BMI tracking &mdash; green is the optimal range, red the extremes</div>
+    <div id="bmi-chart"></div>
     <div class="footer">
         Last updated: {datetime.now().strftime("%Y-%m-%d %H:%M")} |
         Data points: {len(df)} |
@@ -426,6 +529,8 @@ def generate_html(df: pd.DataFrame, models: dict, output_path: str) -> None:
         var figure = {plot_json};
         Plotly.newPlot('chart', figure.data, figure.layout, {{responsive: true}});
         {anim_script_block}
+        var bmiFig = {bmi_json};
+        Plotly.newPlot('bmi-chart', bmiFig.data, bmiFig.layout, {{responsive: true}});
     </script>
 </body>
 </html>"""
